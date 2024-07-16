@@ -9,16 +9,11 @@
 *  By using this code you agree to indemnify Arnan de Gans from any 
 *  liability that might arise from its use.
 ------------------------------------------------------------------------------------ */
-class LimeRequest extends EngineRequest {
+class SukebeiRequest extends EngineRequest {
 	public function get_request_url() {
-		$query = preg_replace('/[^a-z0-9- ]+/', '', $this->search->query);
-		$query = strtolower(str_replace(' ', '-', $query));
-
-		$url = 'https://www.limetorrents.lol/search/all/'.$query.'/';
-		
-		unset($query);
-
-		return $url;
+        $url = 'https://sukebei.nyaa.si/?q='.urlencode($this->search->query);
+        
+        return $url;
 	}
 	
     public function get_request_headers() {
@@ -33,34 +28,32 @@ class LimeRequest extends EngineRequest {
 		
 		// No response
 		if(!$xpath) return $engine_temp;
-
+		
 		// Scrape the results
-		$scrape = $xpath->query("//table[@class='table2']//tr[position() > 1]");
+		$scrape = $xpath->query("//tbody/tr");
 
 		// No results
         if(count($scrape) == 0) return $engine_temp;
 
 		foreach($scrape as $result) {
 			// Find data
-			$title = $xpath->evaluate(".//td[@class='tdleft']//a[2]", $result);
-			$hash = $xpath->evaluate(".//td[@class='tdleft']//a[1]/@href", $result);
-			$seeders = $xpath->evaluate(".//td[@class='tdseed']", $result);
-			$leechers = $xpath->evaluate(".//td[@class='tdleech']", $result);
-			$filesize = $xpath->evaluate(".//td[@class='tdnormal'][2]", $result);
+			$meta = $xpath->evaluate(".//td[@class='text-center']", $result);
+			$title = $xpath->evaluate(".//td[@colspan='2']//a[not(contains(@class, 'comments'))]/@title", $result);
+			$magnet = $xpath->evaluate(".//a[2]/@href", $meta[0]);
 
 			// Skip broken results
 			if($title->length == 0) continue;
-			if($hash->length == 0) continue;
+			if($magnet->length == 0) $magnet = $xpath->evaluate(".//a/@href", $meta[0]); // This matches if no torrent file is provided
+			if($magnet->length == 0) continue;
 
 			// Process data
 			$title = sanitize($title[0]->textContent);
-			$hash = sanitize($hash[0]->textContent);
-			$hash = explode('/', substr($hash, 0, strpos($hash, '.torrent?')));
-			$hash = strtolower($hash[array_key_last($hash)]);
-			$magnet = 'magnet:?xt=urn:btih:'.$hash.'&dn='.urlencode($title).'&tr='.implode('&tr=', $this->opts->magnet_trackers);
-			$seeders = ($seeders->length > 0) ? sanitize($seeders[0]->textContent) : 0;
-			$leechers = ($leechers->length > 0) ? sanitize($leechers[0]->textContent) : 0;
-			$filesize = ($filesize->length > 0) ? human_filesize(filesize_to_bytes(sanitize($filesize[0]->textContent))) : 0;
+			$magnet = sanitize($magnet[0]->textContent);
+			parse_str(parse_url($magnet, PHP_URL_QUERY), $hash_parameters);
+			$hash = strtolower(str_replace('urn:btih:', '', $hash_parameters['xt']));
+			$seeders = sanitize($meta[3]->textContent);
+			$leechers = sanitize($meta[4]->textContent);
+			$filesize =  human_filesize(filesize_to_bytes(str_replace('TiB', 'TB', str_replace('GiB', 'GB', str_replace('MiB', 'MB', str_replace('KiB', 'KB', sanitize($meta[1]->textContent)))))));
 
 			// Ignore results with 0 seeders?
 			if($this->opts->show_zero_seeders == 'off' AND $seeders == 0) continue;
@@ -69,31 +62,24 @@ class LimeRequest extends EngineRequest {
 			if(!is_season_or_episode($this->search->query, $title)) continue;
 			
 			// Find extra data
-			$category = $xpath->evaluate(".//td[@class='tdnormal'][1]", $result);
-			$url = $xpath->evaluate(".//td[@class='tdleft']//a[2]/@href", $result);
+			$category = $xpath->evaluate(".//td[1]//a/@title", $result);
+			$url = $xpath->evaluate(".//td[@colspan='2']//a[not(contains(@class, 'comments'))]/@href", $result);
+			$date_added = $xpath->evaluate(".//td[@class='text-center']/@data-timestamp", $result);
 
 			// Process extra data
-			if($category->length > 0) {
-				$category = explode(' - ', sanitize($category[0]->textContent));
-				$category = str_replace('in ', '', $category[array_key_last($category)]);
-				$category = (preg_match('/[a-z0-9 -]+/i', $category, $category)) ? $category[0] : null;
-			} else {
-				$category = null;
-			}
-			$url = ($url->length > 0) ? 'https://www.limetorrents.lol'.sanitize($url[0]->textContent) : null;
+			$category = ($category->length > 0) ? str_replace(' - ', '/', sanitize($category[0]->textContent)) : null;
+			$url = ($url->length > 0) ? 'https://sukebei.nyaa.si'.sanitize($url[0]->textContent) : null;
+			$timestamp = sanitize($date_added[0]->textContent);
 
 			// Find meta data for certain categories
-			$nsfw = (detect_nsfw($title)) ? true : false;
 			$quality = $codec = $audio = null;
-			if(in_array(strtolower($category), array('movies', 'tv shows', 'anime'))) {
+			if(in_array(strtolower($category), array('art/anime', 'real life/videos'))) {
 				$quality = find_video_quality($title);
 				$codec = find_video_codec($title);
 				$audio = find_audio_codec($title);
 
 				// Add codec to quality
 				if(!empty($codec)) $quality = $quality.' '.$codec;
-			} else if(in_array(strtolower($category), array('music'))) {
-				$audio = find_audio_codec($title);
 			}
 
 			$engine_temp[] = array (
@@ -105,25 +91,25 @@ class LimeRequest extends EngineRequest {
 				'leechers' => $leechers, // int
 				'filesize' => $filesize, // int
 				// Optional
-				'nsfw' => $nsfw, // bool
+				'nsfw' => true, // bool
 				'quality' => $quality, // string|null
 				'type' => null, // string|null
 				'audio' => $audio, // string|null
 				'runtime' => null, // int(timestamp)|null
 				'year' => null, // int(4)|null
-				'timestamp' => null, // int(timestamp)|null
+				'timestamp' => $timestamp, // int(timestamp)|null
 				'category' => $category, // string|null
 				'mpa_rating' => null, // string|null
 				'language' => null, // string|null
 				'url' => $url // string|null
 			);
 
-			unset($result, $title, $hash, $magnet, $seeders, $leechers, $filesize, $quality, $codec, $audio, $category, $url);
+			unset($result, $title, $hash, $magnet, $seeders, $leechers, $filesize, $quality, $codec, $audio, $category, $url, $date_added);
 		}
 
 		// Base info
 		if(!empty($engine_temp)) {
-			$engine_result['source'] = 'limetorrents.lol';
+			$engine_result['source'] = 'sukebei.nyaa.si';
 			$engine_result['search'] = $engine_temp;
 		}
 

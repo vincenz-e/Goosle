@@ -9,20 +9,16 @@
 *  By using this code you agree to indemnify Arnan de Gans from any 
 *  liability that might arise from its use.
 ------------------------------------------------------------------------------------ */
-class GoogleRequest extends EngineRequest {
+class BraveRequest extends EngineRequest {
     public function get_request_url() {
-		// Including the preferred language variable breaks the page result, and with that the crawler!
-        $url = 'https://www.google.com/search?'.http_build_query(array(
+		$url = 'https://search.brave.com/search?'.http_build_query(array(
         	'q' => $this->search->query, // Search query
-        	'safe' => $this->search->safe, // Safe search (0 = off, 1 = moderate, 2 = on/strict)
-        	'num' => 30, // Number of results per page
-        	'pws' => 0, // Personalized search results (0 = off)
-        	'udm' => 14, // A view for simpler/non-ai results
-        	'tbs' => 'li:1', // 'verbatim' search, adding this enables it
-        	'complete' => '0', // Instant results related (0 = off)
-        	'sclient' => 'web' // Where are you searching from
+        	'offset' => 0, // Start on 'page' 1 of results (0 = 1)
+        	'show_local' => 0, // Localize results (0 = no localization)
+        	'spellcheck' => 0, // No spellcheck on your query
+        	'source' => 'web' // Where are you searching from? (Web)
         ));
-
+        
         return $url;
     }
 
@@ -34,13 +30,13 @@ class GoogleRequest extends EngineRequest {
 
     public function parse_results($response) {
 		$engine_temp = $engine_result = array();
-        $xpath = get_xpath($response);
+		$xpath = get_xpath($response);
 
 		// No response
-        if(!$xpath) return $engine_temp;
+		if(!$xpath) return $engine_temp;
 
 		// Scrape the results
-		$scrape = $xpath->query("//div[@id='search']//div[@class='MjjYud']");
+		$scrape = $xpath->query("//div[@id='results']//div[contains(@class, 'snippet')]");
 
 		// Figure out results and base rank
 		$number_of_results = $rank = count($scrape);
@@ -48,35 +44,25 @@ class GoogleRequest extends EngineRequest {
 		// No results
         if($number_of_results == 0) return $engine_temp;
 
-		// Scrape recommended
-        $didyoumean = $xpath->query(".//a[@class='gL9Hy']")[0];
-        if(!is_null($didyoumean)) {
-			$engine_result['did_you_mean'] = $didyoumean->textContent;
-        }
-        $search_specific = $xpath->query(".//a[@class='spell_orig']")[0];
-        if(!is_null($search_specific)) {
-	        // Google doesn't add quotes by itself
-			$engine_result['search_specific'] = "\"".$search_specific->textContent."\"";
-		}
-
-        foreach($scrape as $result) {
+		foreach($scrape as $result) {
 			// Find data
-			$url = $xpath->evaluate(".//div[@class='yuRUbf']//a/@href", $result);
-			$title = $xpath->evaluate(".//h3", $result);
-			$description = $xpath->evaluate(".//div[contains(@class, 'VwiC3b')]", $result);
+			$url = $xpath->evaluate(".//a[contains(@class, 'h')]//@href", $result);
+			$title = $xpath->evaluate(".//a[contains(@class, 'h')]//div[contains(@class, 'title')]", $result);
+			$description = $xpath->evaluate(".//div[contains(@class, 'snippet-content')]//div[contains(@class, 'snippet-description')]", $result);
 
 			// Skip broken results
 			if($url->length == 0) continue;
 			if($title->length == 0) continue;
-			
+
 			// Process data
 			$url = sanitize($url[0]->textContent);
+			$url = (strpos($url, '/a/redirect?click_url=', 0) !== false) ? "https://search.brave.com".$url : $url;
 			$title = strip_newlines(sanitize($title[0]->textContent));
 			$description = ($description->length == 0) ? "No description was provided for this site." : limit_string_length(strip_newlines(sanitize($description[0]->textContent)));
 
 			// filter duplicate urls/results
             if(!empty($engine_temp)) {
-                if(in_array($url, array_column($engine_temp, "url"))) continue;
+                if(in_array($url, array_column($engine_temp, 'url'))) continue;
             }
 
 			$engine_temp[] = array(
@@ -86,17 +72,17 @@ class GoogleRequest extends EngineRequest {
 				'engine_rank' => $rank
 			);
 			$rank -= 1;
-        }
+		}
 
 		// Base info
 		if(!empty($engine_temp)) {
-			$engine_result['source'] = 'Google';
+			$engine_result['source'] = 'Brave';
 			$engine_result['search'] = $engine_temp;
 		}
 
 		unset($response, $xpath, $scrape, $number_of_results, $rank, $engine_temp);
 
-        return $engine_result;
+		return $engine_result;
     }
 }
 ?>

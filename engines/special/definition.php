@@ -1,6 +1,6 @@
 <?php
 /* ------------------------------------------------------------------------------------
-*  Goosle - A meta search engine for private and fast internet fun.
+*  Goosle - The fast, privacy oriented search tool that just works.
 *
 *  COPYRIGHT NOTICE
 *  Copyright 2023-2024 Arnan de Gans. All Rights Reserved.
@@ -11,12 +11,11 @@
 ------------------------------------------------------------------------------------ */
 class DefinitionRequest extends EngineRequest {
 	public function get_request_url() {
-        $query_terms = explode(" ", $this->query);
-
-		// [0] = (define|d|mean|meaning)
+		// [0] = (define|meaning)
 		// [1] = WORD
-
-		return "https://api.dictionaryapi.dev/api/v2/entries/en/".$query_terms[1];
+		$url = 'https://api.dictionaryapi.dev/api/v2/entries/en/'.$this->search->query_terms[1];
+		
+		return $url;
 	}
 
     public function get_request_headers() {
@@ -24,7 +23,6 @@ class DefinitionRequest extends EngineRequest {
 			'Accept' => 'application/json, */*;q=0.8',
 			'Accept-Language' => null,
 			'Accept-Encoding' => null,
-			'Connection' => null,
 			'Sec-Fetch-Dest' => null,
 			'Sec-Fetch-Mode' => null,
 			'Sec-Fetch-Site' => null
@@ -32,39 +30,60 @@ class DefinitionRequest extends EngineRequest {
 	}
 
 	public function parse_results($response) {
+		$engine_result = array();
 		$json_response = json_decode($response, true);
 
-		if(!empty($json_response)) {
-			// Word not found
-			if (array_key_exists("title", $json_response)) {
-				return array(
-	                "title" => strip_tags(trim($json_response['title'])),
-	                "text" => strip_tags(trim($json_response['message']))
-				);
-			}
-	
-			// Grab first result if there are multiple
-			$result = $json_response[0];
-			$definitions = array_slice($result['meanings'][0]['definitions'], 0, 3);
-	
-			// Word found
-			$formatted_response = strip_tags(trim($result['meanings'][0]['partOfSpeech']))."<br /><ol class=\"word-definitions\">";
-			foreach($definitions as $key => $def) {
-				$formatted_response .= "<li>".strip_tags(trim($def['definition']))."</li>";
+		// No response
+		if(empty($json_response)) return $engine_result;
+
+		// No results
+        if(isset($json_response['title']) && $json_response['title'] == 'No Definitions Found') return $engine_result;
+
+		$result = $json_response[0]; // Always grab the first result
+
+		// Incomplete listing? Bail!
+        if(!array_key_exists('word', $result)) return $engine_result;
+
+		// Find a phonetic spelling
+		if(isset($result['phonetic'])) {
+			$phonetic = $result['phonetic'];
+		} else if(isset($result['phonetics'])) {
+			$phonetic = array_column($result['phonetics'], 'text');
+			$phonetic = (count($phonetic) > 0) ? $phonetic[0] : $result['word'];
+		} else {
+			$phonetic = $result['word'];
+		}
+
+		// List definitions
+		$formatted_response = "";
+		foreach($result['meanings'] as $meaning) {
+			$formatted_response .= "<p>".sanitize($meaning['partOfSpeech'])."</p>";
+			$definitions = array_slice($meaning['definitions'], 0, 3);
+
+			$formatted_response .= "<ol class=\"word-definitions\">";
+			foreach($definitions as $definition) {
+				$formatted_response .= "<li>";
+				$formatted_response .= "	".sanitize($definition['definition']);
+				$formatted_response .= (array_key_exists("example", $definition)) ? "	<br /><small><strong>Example:</strong> ".sanitize($definition['example'])."</small>" : "";
+				$formatted_response .= "</li>";
+
+				unset($definition);
 			}
 			$formatted_response .= "</ol>";
-			
-			return array(
-				"title" => strip_tags(trim($result['word']))." <span>[".strip_tags(trim($result['phonetic']))."]</span>",
-				"text" => $formatted_response,
-				"source" => strip_tags(trim($result['sourceUrls'][0]))
-			);
-	    } else {
-	        return array(
-                "title" => "Whoops...",
-                "text" => "No definitions could be loaded. Try again later."
-	        );
+
+			unset($meaning);
 		}
+		
+		// Return result
+		$engine_result = array(
+			'title' => "Definition for: ".sanitize($result['word'])." <span>[".sanitize($phonetic)."]</span>",
+			'text' => $formatted_response,
+			'source' => sanitize($result['sourceUrls'][0])
+		);
+
+		unset($response, $json_response, $result, $phonetic, $definitions, $formatted_response);
+
+		return $engine_result;
 	}
 }
 ?>
