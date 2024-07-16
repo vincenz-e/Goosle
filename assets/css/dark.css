@@ -15,7 +15,7 @@
 	--link-visited: #6d59a3; /* Purple */
 	--link-source: #eff1f7; /* Almost white */
     --meta: #999; /* Grey */
-	--result-special-background: #ebf3fa; /* Light blue */
+	--result-special-background: transparent; /* Light blue */
 
 	/* Front page (Also used on oAUTH page) */
 	--startpage-border: #545a5f; /* Grey */
